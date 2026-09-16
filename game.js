@@ -27,28 +27,47 @@ function destination(pos, steps, shortcut = true) {
   return p;
 }
 const cell=p=>p==='ca'||p==='cb'?'c':p;
-function newGame(players) { return {players, pieces:[['start','start'],['start','start']], turn:randomInt(2), phase:'throw', result:null, last:null, winner:null, revision:0, log:['두 말을 모두 도착시키면 승리!']}; }
-function roll(game, rand=randomInt) {
-  if(game.winner!==null || game.phase!=='throw') throw Error('지금은 윷을 던질 수 없어요.');
+function newGame(players) { return {players, pieces:[['start','start'],['start','start']], turn:randomInt(2), phase:'throw', pending:[], credits:1, serial:0, last:null, winner:null, revision:0, log:[]}; }
+function log(g,t){g.log.unshift(t);g.log=g.log.slice(0,16);}
+function roll(g,rand=randomInt){
+  if(g.winner!==null||g.phase!=='throw'||g.credits<1)throw Error('지금은 윷을 던질 수 없어요.');
   const sticks=Array.from({length:4},()=>rand(2));
-  const sum=sticks.reduce((a,b)=>a+b,0), steps=sum===0?5:sum;
-  game.result=steps; game.last={sticks,steps,label:LABELS[steps]}; game.phase='move'; game.revision++;
-  game.log.unshift(`${game.turn===0?'주황':'파랑'} · ${LABELS[steps]}! ${steps}칸 이동하세요.`); game.log=game.log.slice(0,12);
+  const sum=sticks.reduce((a,b)=>a+b,0),steps=sum===0?5:sum;
+  g.last={sticks,steps,label:LABELS[steps]};g.pending.push({id:++g.serial,steps,label:LABELS[steps]});
+  g.credits--;if(steps>=4)g.credits++;
+  g.phase=g.credits>0?'throw':'move';g.revision++;
+  log(g,`${g.turn===0?'주황':'파랑'} · ${LABELS[steps]}${steps>=4?'! 한 번 더':''}`);
 }
-function move(game,index,shortcut=true) {
-  if(game.winner!==null || game.phase!=='move' || !Number.isInteger(index) || index<0 || index>1 || typeof shortcut!=='boolean') throw Error('이동할 말을 골라 주세요.');
-  const side=game.turn, own=game.pieces[side], enemy=game.pieces[1-side], old=own[index];
-  if(old==='home') throw Error('이미 도착한 말이에요.');
-  const target=destination(old,game.result,shortcut);
-  const together=old!=='start' && cell(own[1-index])===cell(old);
-  own[index]=target; if(together) own[1-index]=target;
+function options(g){
+  if(g.phase!=='move'||g.winner!==null)return [];
+  const out=[];
+  g.pieces[g.turn].forEach((pos,piece)=>{
+    if(pos==='home')return;
+    for(const result of g.pending){const seen=new Set();for(const shortcut of[true,false]){
+      const dest=destination(pos,result.steps,shortcut);if(seen.has(dest))continue;seen.add(dest);
+      const capture=g.pieces[1-g.turn].filter(p=>p!=='start'&&p!=='home'&&cell(p)===cell(dest)).length;
+      out.push({piece,resultId:result.id,steps:result.steps,label:result.label,shortcut,dest,capture});
+    }}
+  });return out;
+}
+function move(g,index,resultId,shortcut=true){
+  if(!Number.isInteger(index)||typeof shortcut!=='boolean')throw Error('말과 도착 칸을 골라 주세요.');
+  const option=options(g).find(o=>o.piece===index&&o.resultId===resultId&&o.shortcut===shortcut);
+  if(!option)throw Error('선택할 수 없는 이동이에요.');
+  const own=g.pieces[g.turn],enemy=g.pieces[1-g.turn],old=own[index],target=option.dest;
+  const together=old!=='start'&&cell(own[1-index])===cell(old);
+  own[index]=target;if(together)own[1-index]=target;
   let captures=0;
-  if(target!=='home') enemy.forEach((p,i)=>{ if(p!=='start'&&p!=='home'&&cell(p)===cell(target)){enemy[i]='start';captures++;} });
-  const extra=game.result>=4||captures>0;
-  if(own.every(p=>p==='home')) {game.winner=game.players[side];game.phase='finished';game.log.unshift('두 말 모두 도착! 승리했어요.');}
-  else {game.phase='throw';if(!extra)game.turn=1-side;game.log.unshift(captures?`${captures}개 잡기! 한 번 더 던져요.`:extra?'윷·모! 한 번 더 던져요.':target==='home'?'말이 도착했어요!':'다음 차례예요.');}
-  game.result=null;game.revision++;game.log=game.log.slice(0,12);
+  if(target!=='home')enemy.forEach((p,i)=>{if(p!=='start'&&p!=='home'&&cell(p)===cell(target)){enemy[i]='start';captures++;}});
+  g.pending=g.pending.filter(r=>r.id!==resultId);if(captures)g.credits++;
+  log(g,captures?`${captures}개 잡기!` : target==='home'?'도착!':`${option.label} · ${option.steps}칸 이동`);
+  if(own.every(p=>p==='home')){g.winner=g.players[g.turn];g.phase='finished';log(g,'두 말 도착 · 승리!');}
+  else if(g.pending.length)g.phase='move';
+  else if(g.credits>0)g.phase='throw';
+  else{g.turn=1-g.turn;g.phase='throw';g.credits=1;}
+  g.revision++;
 }
+function auto(g){if(g.phase==='throw')roll(g);else{const choices=options(g).sort((a,b)=>(b.dest==='home')-(a.dest==='home')||b.capture-a.capture||b.steps-a.steps);const o=choices[0];if(o)move(g,o.piece,o.resultId,o.shortcut);}log(g,'시간 종료 · 자동 진행');}
 function shuffle(list,rand=randomInt){const a=[...list];for(let i=a.length-1;i>0;i--){const j=rand(i+1);[a[i],a[j]]=[a[j],a[i]];}return a;}
 function bracket(ids,rand=randomInt){
   if(ids.length<2||ids.length>64||new Set(ids).size!==ids.length)throw Error('참가자는 2~64명이어야 해요.');
@@ -64,4 +83,4 @@ function bracket(ids,rand=randomInt){
   for(let n=size/4;n>=1;n/=2)rounds.push(Array.from({length:n},()=>({id:`m${++counter}`,players:[null,null],status:'pending',winner:null,game:null})));
   return rounds;
 }
-module.exports={destination,cell,newGame,roll,move,bracket};
+module.exports={destination,cell,newGame,roll,move,bracket,options,auto};
