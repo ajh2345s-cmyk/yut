@@ -46,7 +46,8 @@ function options(g){
     for(const result of g.pending){const seen=new Set();for(const shortcut of[true,false]){
       const dest=destination(pos,result.steps,shortcut);if(seen.has(dest))continue;seen.add(dest);
       const capture=g.pieces[1-g.turn].filter(p=>p!=='start'&&p!=='home'&&cell(p)===cell(dest)).length;
-      out.push({piece,resultId:result.id,steps:result.steps,label:result.label,shortcut,dest,capture});
+      const other=g.pieces[g.turn][1-piece];const wins=dest==='home'&&(other==='home'||pos!=='start'&&cell(other)===cell(pos));
+      out.push({piece,resultId:result.id,steps:result.steps,label:result.label,shortcut,dest,capture,wins});
     }}
   });return out;
 }
@@ -62,10 +63,15 @@ function move(g,index,resultId,shortcut=true){
   g.pending=g.pending.filter(r=>r.id!==resultId);if(captures)g.credits++;
   log(g,captures?`${captures}개 잡기!` : target==='home'?'도착!':`${option.label} · ${option.steps}칸 이동`);
   if(own.every(p=>p==='home')){g.winner=g.players[g.turn];g.phase='finished';log(g,'두 말 도착 · 승리!');}
-  else if(g.pending.length)g.phase='move';
   else if(g.credits>0)g.phase='throw';
+  else if(g.pending.length)g.phase='move';
   else{g.turn=1-g.turn;g.phase='throw';g.credits=1;}
   g.revision++;
+}
+function finishMove(g,piece){
+  const choice=options(g).filter(o=>o.piece===piece&&o.wins).sort((a,b)=>a.steps-b.steps||a.resultId-b.resultId)[0];
+  if(!choice)throw Error('마지막 말을 완주시키는 이동만 자동 선택할 수 있어요.');
+  move(g,choice.piece,choice.resultId,choice.shortcut);
 }
 function auto(g){if(g.phase==='throw')roll(g);else{const choices=options(g).sort((a,b)=>(b.dest==='home')-(a.dest==='home')||b.capture-a.capture||b.steps-a.steps);const o=choices[0];if(o)move(g,o.piece,o.resultId,o.shortcut);}log(g,'시간 종료 · 자동 진행');}
 function shuffle(list,rand=randomInt){const a=[...list];for(let i=a.length-1;i>0;i--){const j=rand(i+1);[a[i],a[j]]=[a[j],a[i]];}return a;}
@@ -83,4 +89,4 @@ function bracket(ids,rand=randomInt){
   for(let n=size/4;n>=1;n/=2)rounds.push(Array.from({length:n},()=>({id:`m${++counter}`,players:[null,null],status:'pending',winner:null,game:null})));
   return rounds;
 }
-module.exports={destination,cell,newGame,roll,move,bracket,options,auto};
+module.exports={destination,cell,newGame,roll,move,bracket,options,auto,finishMove};
